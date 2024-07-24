@@ -1,15 +1,1 @@
-# Ignore Vivado generated files and directories
-vivado_project/
-project_competition.cache/
-project_competition.hw/
-project_competition.ip_user_files/
-project_competition.runs/
-project_competition.sim/
-project_competition.xpr
-
-# Ignore temporary files and directories
-.vscode/
-*.jou
-*.log
-*.wcfg
-
+vivado_project/*
