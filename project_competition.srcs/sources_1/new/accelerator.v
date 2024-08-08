@@ -21,27 +21,34 @@
 
 module accelerator #(
     parameter addr_width = 4,
+    parameter instr_width = 5,
     parameter data_width = 8,
     parameter array_width = 32,
     parameter input_len = 3    
 )(
     input clk, 
-    input rst_n,
+    input rst_acce,
+    input rst_array,
 //    input start,
-    output reg start,
-    output reg ramio_en,  // RAM Ê¹ÄÜ
-    output reg ramwe_en,
-    output reg ramin_en,
-//    output reg ram_wea, // RAM ¶ÁĞ´Ê¹ÄÜĞÅºÅ£¬¸ßµçÆ½Ğ´Èë£¬µÍµçÆ½¶Á³ö
-//    output reg [addr_width-1:0] ram_addr, 
-//    output reg [data_width-1:0] ram_wr_data, 
-//    input [data_width-1:0] ram_rd_data, // RAM ¶ÁÊı¾İ£¬Ó¦¸ÃÊÇÊäÈë
+    input start_acce,
+    input start_array,
+
+
     output reg ramio_wea,
     output reg ramwe_wea,
     output reg ramin_wea,
-    output reg relu,
-    output reg [2:0] state
+    output wire relu,
+    output reg [2:0] current_state, next_state
+
 );
+
+
+
+reg ramio_en;
+reg ramwe_en;
+reg ramin_en;
+
+
 
 reg [addr_width-1:0] ramio_addr;
 reg [addr_width-1:0] ramwe_addr;
@@ -49,16 +56,17 @@ reg [addr_width-1:0] ramin_addr;
 
 wire [data_width-1:0] weight_buffer_data_out;
 wire [data_width-1:0] io_buffer_data_out;
-wire [data_width-1:0] instruction_buffer_data_out;
+wire [instr_width-1:0] instruction_buffer_data_out;
+wire [2:0] state_change;
 
 reg [data_width-1:0] weight_buffer_data_in;
 reg [data_width-1:0] io_buffer_data_in;
-reg [data_width-1:0] instruction_buffer_data_in;
+reg [instr_width-1:0] instruction_buffer_data_in;
 
 // Declare these as reg instead of wire
 reg signed [data_width*array_width-1:0] a_mul_array;
 reg signed [data_width*array_width-1:0] b_mul_array;
-reg signed [data_width*array_width-1:0] output_result;
+wire signed [data_width*array_width-1:0] output_result;//åº”è¯¥æ˜¯wirelessä¿¡å·å§
 
 //reg [data_width-1:0] a_mul, b_mul;
 
@@ -70,39 +78,40 @@ localparam [2:0] IDLE = 3'b000,
                  WRITE_BUFFER = 3'b101;
 
 // Weight Buffer
-weight_buffer weight_buffer_inst (
-    .clk(clk),
-    .rst_n(rst_n),
-    .en(ramwe_en),
+we_buffer we_buffer_inst (
+    .clka(clk),
+//    .rst_n(rst_n),
+    .ena(ramwe_en),
     .wea(ramwe_wea),
-    .addr(ramwe_addr),
-    .data_in(weight_buffer_data_in),
-    .data_out(weight_buffer_data_out)
+    .addra(ramwe_addr),
+    .dina(weight_buffer_data_in),
+    .douta(weight_buffer_data_out)
 );
 
 // IO Buffer
-IO_buffer io_buffer_inst (
-    .clk(clk),
-    .rst_n(rst_n),
-    .en(ramio_en),
+io_buffer io_buffer_inst (
+    .clka(clk),
+//    .rst_n(rst_n),
+    .ena(ramio_en),
     .wea(ramio_wea),
-    .addr(ramio_addr),
-    .data_in(io_buffer_data_in),
-    .data_out(io_buffer_data_out)
+    .addra(ramio_addr),
+    .dina(io_buffer_data_in),
+    .douta(io_buffer_data_out)
 );
 
 // Instruction Buffer
-Instruction_buffer instruction_buffer_inst (
-    .clk(clk),
-    .rst_n(rst_n),
-    .en(ramin_en),
+in_buffer in_buffer_inst (
+    .clka(clk),
+//    .rst_n(rst_n),
+    .ena(ramin_en),
     .wea(ramin_wea),
-    .addr(ramin_addr),
-    .data_in(instruction_buffer_data_in),
-    .data_out(instruction_buffer_data_out)
+    .addra(ramin_addr),
+    .dina(instruction_buffer_data_in),
+    .douta(instruction_buffer_data_out)
 );
 
 wire done;
+assign relu = ramio_addr[4:3];
 
 systolic_array #(
     .ARRAY_N(array_width),
@@ -119,9 +128,9 @@ systolic_array #(
     .input_len(input_len)
 ) systolic_array_inst (
     .clk(clk),
-    .rst_n(rst_n),
-    .start(start),
-    .empty(1'b0),
+    .rst_n(rst_array),//ä¸åŒ
+    .start(start_array),//ä¸åŒ
+    .empty(1'b0),//ä¸æ˜¯0
     .a_mul(a_mul_array),
     .b_mul(b_mul_array),
     .relu(relu),
@@ -129,83 +138,142 @@ systolic_array #(
     .done(done)
 );
 
-always @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-        state <= IDLE;
+always @(posedge clk or negedge rst_acce)begin
+    if(rst_acce) begin
+        current_state <= IDLE;
     end else begin
-        case(state)
-            IDLE: begin
-                ramwe_en <= 0;
-                ramio_en <= 0;
-                ramin_en <= 0;
-                ramwe_wea <= 0;
-                ramwe_addr <= 0;
-                ramio_wea <= 0;
-                ramio_addr <= 0;
-                ramin_wea <= 0;
-                ramin_addr <= 0;
-                
-                weight_buffer_data_in <= 0;
-                io_buffer_data_in <= 0;
-                instruction_buffer_data_in <= 0;
-                
-                a_mul_array <= 0;
-                b_mul_array <= 0;
-                output_result <= 0;
+        current_state <= next_state;
+    end
+end
+
+//assign state_change = instruction_buffer_data_out[4:2];
+
+always @(posedge clk or negedge rst_acce) begin
+    case (current_state)
+        IDLE:begin
+            if(start_acce)
+                next_state <= READ_INSTR;
+            else 
+                next_state <= IDLE;
             end
-            READ_INSTR: begin
-                ramin_en <= 1;
-                ramin_wea <= 0;
-                ramin_addr <= ramin_addr + 1;
-                ramio_en <= 1;
-                ramio_addr <= instruction_buffer_data_out;
+        READ_INSTR:begin
+            if(rst_acce)
+                next_state <= IDLE;
+//             else if(state_change == 3'b010)
+//                next_state <= READ_DATA;
+//            else
+//                next_state <= READ_INSTR;
+//            end
+            else
+                next_state <= READ_DATA;
             end
-            READ_DATA: begin
-                ramio_en <= 1;
-                ramio_wea <= 0;
-                ramio_addr <= ramio_addr + 1;
-                ramwe_en <= 1;
-                ramwe_wea <= 0;
-                a_mul_array <= io_buffer_data_out;
-                b_mul_array <= weight_buffer_data_out;
+        READ_DATA:begin
+            if(rst_acce)
+                next_state <= IDLE;
+            else if (start_array)
+                next_state <= SA_COMPUTE;
+            else 
+                next_state <= READ_DATA;
             end
-            SA_COMPUTE: begin
-                a_mul_array <= io_buffer_data_out;
-                b_mul_array <= weight_buffer_data_out;
+        SA_COMPUTE:begin
+            if(rst_acce)
+                next_state <= IDLE;
+            else if(done)
+                next_state <= FINISH;
+            else
+                next_state <= SA_COMPUTE;
             end
-            FINISH: begin
-                ramio_en <= 1;
-                ramio_wea <= 1;
-                ramwe_en <= 1;
-                ramwe_wea <= 1;
-                a_mul_array <= 0;
-                b_mul_array <= 0;
+        FINISH:begin
+            if(rst_acce)
+                next_state <= IDLE;
+            else if(state_change ==  3'b101)
+                next_state <= WRITE_BUFFER;
+            else 
+                next_state <= FINISH;
             end
-            WRITE_BUFFER: begin
-                ramio_en <= 1;
-                ramio_wea <= 1;
-                io_buffer_data_in <= output_result;
+        WRITE_BUFFER:begin
+            if(rst_acce)
+                next_state <= IDLE;
+            else 
+                next_state <= WRITE_BUFFER;
+            end
+        default: begin
+                next_state = IDLE;
             end
         endcase
     end
+            
+
+
+always @(posedge clk or negedge rst_acce) begin //è¿˜æœ‰çŠ¶æ€è·³è½¬
+    case(current_state)
+        IDLE: begin
+            ramwe_en <= 0;
+            ramio_en <= 0;
+            ramin_en <= 0;
+            ramwe_wea <= 0;
+            ramwe_addr <= 0;
+            ramio_wea <= 0;
+            ramio_addr <= 0;
+            ramin_wea <= 0;
+            ramin_addr <= 0;
+            
+            weight_buffer_data_in <= 0;
+            io_buffer_data_in <= 0;
+            instruction_buffer_data_in <= 0;
+            
+            a_mul_array <= 0;
+            b_mul_array <= 0;
+//                output_result <= 0;
+        end
+        READ_INSTR: begin
+            ramin_en <= 1;
+            ramin_wea <= 0;
+            ramin_addr <= ramin_addr + 1;
+            ramio_en <= 1;
+            ramio_addr <= instruction_buffer_data_out;//äº”ä½ä¿¡å·çš„æ‹†è§£ï¼Œè¿˜è¦æ®æ­¤å†™reluç›¸å…³çš„æ“ä½œ
+            ramwe_en <= 0;
+        end
+        READ_DATA: begin
+            ramin_en <= 0;
+            ramio_en <= 1;
+            ramio_wea <= 0;
+            ramio_addr <= ramio_addr + 1;
+            ramwe_en <= 1;
+            ramwe_wea <= 0;
+            a_mul_array <= io_buffer_data_out;
+            b_mul_array <= weight_buffer_data_out;
+        end
+        SA_COMPUTE: begin
+            ramwe_en <= 0;
+            ramio_en <= 0;
+            ramin_en <= 0;
+            a_mul_array <= io_buffer_data_out;
+            b_mul_array <= weight_buffer_data_out;
+        end
+        FINISH: begin
+            ramin_en <= 0;
+            ramio_en <= 1;
+            ramio_wea <= 1;
+            ramwe_en <= 1;
+            ramwe_wea <= 1;
+            a_mul_array <= 0;
+            b_mul_array <= 0;
+        end
+        WRITE_BUFFER: begin
+            ramio_en <= 0;
+            ramin_en <= 0;
+            ramio_en <= 1;
+            ramio_wea <= 1;
+            io_buffer_data_in <= output_result;
+        end
+    endcase
 end
 
 
 
-//always @(posedge clk or negedge rst_n) begin
-//    if (!rst_n) begin
-//        relu <= 0;
-//    end else if (done) begin
-//        relu <= 0;
-//    end
-//end
 
-//always @(posedge clk or negedge rst_n) begin
-//    if(!rst_n) begin
-//        output_result <= 0;
-//    end else begin
-//        output_result <= weight_buffer_data_out;
-//    end
-//end
+
+
 
 endmodule
